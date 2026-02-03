@@ -83,14 +83,14 @@
 
 /* Leaflet Overrides for Dark Mode Map */
 .leaflet-container {
-  background: #1a1d24 !important;
-  font-family: 'Inter', sans-serif !important;
+  background: #1a1d24;
+  font-family: 'Inter', sans-serif;
 }
 
 .leaflet-popup-content-wrapper {
-  @apply bg-card text-foreground rounded-lg border border-border shadow-xl !important;
+  @apply bg-card text-foreground rounded-lg border border-border shadow-xl;
 }
 
 .leaflet-popup-tip {
-  @apply bg-card !important;
+  @apply bg-card;
 }
