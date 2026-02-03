@@ -1,0 +1,71 @@
+You are helping me run and refine a project called:
+
+SafeRoute – Crime Aware Route Recommendation System
+
+Goal:
+A web app that recommends the SAFEST route (not just shortest) by analyzing crime risk, and shows it on an interactive map with a heatmap overlay.
+
+Tech stack (must keep):
+- Backend: Python, FastAPI, Pandas, Folium, Requests, OSRM public routing API, OpenStreetMap + Nominatim geocoding
+- Frontend: HTML, CSS, vanilla JavaScript + Browser Geolocation API
+
+Project structure I want in Replit:
+SafeRoute/
+  backend/
+    main.py
+    heatmap.py
+    safe_route.py
+    data/crime_data.csv
+  frontend/
+    index.html
+    style.css
+    app.js
+
+Key backend behavior:
+- POST /api/safe-route
+  - Input JSON: origin_lat, origin_lon, destination, hour, gender
+  - Uses:
+    - crime_data.csv with columns: latitude, longitude, crime_type, hour
+    - risk scoring:
+        robbery=3, assault=4, harassment=5, stalking=5
+        +2 at night (hour >=21 or <=5)
+        +2 extra for harassment/stalking if gender=female
+    - OSRM routing API (with alternatives) to get routes
+    - Cumulative risk along each route to pick:
+        - shortest route (by distance)
+        - safest route (lowest risk sum)
+    - Folium map:
+        - Heatmap where intensity = risk_score
+        - Red polyline = shortest route
+        - Green polyline = safest route
+        - Start and destination markers
+  - Returns: {"map_html": "<iframe ...>"} (Folium’s embeddable HTML)
+
+Key frontend behavior:
+- On load: use browser geolocation to get current lat/lon.
+- UI elements:
+  - Destination input
+  - Time dropdown (Day/Night -> mapped to an hour)
+  - Gender dropdown (Male/Female)
+  - “Find Safe Route” button
+  - Map area that will show the returned Folium map.
+- When user clicks the button:
+  - Send POST to the FastAPI backend with the fields above.
+  - Replace the map container with the returned map_html content.
+
+What I want you (Replit agent) to do:
+
+1. Recreate or import this structure in Replit and make sure the backend FastAPI app and the static frontend are BOTH served correctly from the Replit web URL (not from localhost).
+2. Adjust all URLs so:
+   - The frontend JavaScript calls the correct backend URL for /api/safe-route in the Replit environment.
+   - CORS is correctly configured for the deployed URL.
+3. Make sure the run command in Replit starts the FastAPI app (using uvicorn or similar) and serves the frontend files (index.html, style.css, app.js) in a way that works from a single Replit web server.
+4. Verify that:
+   - The browser geolocation works over HTTPS (as Replit provides).
+   - Entering a destination and clicking “Find Safe Route” shows:
+     - A crime heatmap
+     - Red (shortest) and green (safest) routes
+     - Start and destination markers
+5. If any modifications are needed to integrate frontend and backend cleanly in Replit (e.g., mounting static files in FastAPI, changing fetch URLs, or tweaking CORS), make those changes but keep the overall architecture and behavior the same.
+
+Explain what you changed and show me how to run and test the app from the Replit URL.
