@@ -2,6 +2,8 @@
 
 Crime-aware route recommendation system with a FastAPI backend and a Vite + React frontend.
 
+Live demo: https://safe-route-wine.vercel.app
+
 ## Tech Stack
 
 - Frontend: React 19, TypeScript, Vite, Tailwind CSS 4, Radix UI, Framer Motion, Leaflet / react-leaflet
