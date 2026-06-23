@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MapView } from "@/components/map-view";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,47 +7,182 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Shield, Navigation, AlertTriangle, Moon, Sun, MapPin, Search } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { API_BASE_URL } from "@/lib/api";
+
+type DestinationSuggestion = {
+  name: string;
+  lat: number;
+  lon: number;
+};
 
 export default function Home() {
   const [isSearching, setIsSearching] = useState(false);
   const [showRoutes, setShowRoutes] = useState(false);
   const [mapHtml, setMapHtml] = useState<string | null>(null);
+  const [routeRisk, setRouteRisk] = useState<{ percent: number; label: string } | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
   
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
+  const [destinationSuggestions, setDestinationSuggestions] = useState<DestinationSuggestion[]>([]);
+  const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
+  const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
+  const [destinationCoords, setDestinationCoords] = useState<[number, number] | null>(null);
   const [time, setTime] = useState("night");
   const [gender, setGender] = useState("female");
 
+  // Inject the backend-generated map HTML only when mapHtml changes,
+  // so typing in the form doesn't keep reloading the iframe and
+  // causing a flicker.
+  useEffect(() => {
+    if (mapContainerRef.current && mapHtml) {
+      mapContainerRef.current.innerHTML = mapHtml;
+    }
+  }, [mapHtml]);
+
+  // Get user's location once to bias autocomplete around their area
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setUserLocation([position.coords.latitude, position.coords.longitude]);
+      },
+      (error) => {
+        console.error("Geolocation error for autocomplete", error);
+      },
+      { enableHighAccuracy: true, maximumAge: 60000, timeout: 10000 }
+    );
+  }, []);
+
+  // Fetch destination suggestions as the user types (simple debounce)
+  useEffect(() => {
+    const query = destination.trim();
+
+    // Clear suggestions for very short queries
+    if (query.length < 1) {
+      setDestinationSuggestions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        setIsFetchingSuggestions(true);
+
+        // If we know the user's location, restrict search to a small box around them
+        let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+          query
+        )}&addressdetails=1&limit=5`;
+
+        if (userLocation) {
+          const [lat, lon] = userLocation;
+          const delta = 0.15; // ~15km box around user
+          const left = lon - delta;
+          const bottom = lat - delta;
+          const right = lon + delta;
+          const top = lat + delta;
+          url += `&viewbox=${left},${top},${right},${bottom}&bounded=1`;
+        }
+
+        const response = await fetch(url, {
+          headers: {
+            Accept: "application/json",
+          },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          setDestinationSuggestions([]);
+          return;
+        }
+
+        const results: any[] = await response.json();
+        const places: DestinationSuggestion[] = results
+          .filter((p) => p && p.display_name && p.lat && p.lon)
+          .map((p) => ({
+            name: String(p.display_name),
+            lat: parseFloat(p.lat),
+            lon: parseFloat(p.lon),
+          }));
+
+        setDestinationSuggestions(places);
+      } catch (error) {
+        if ((error as any)?.name !== "AbortError") {
+          console.error("Failed to fetch destination suggestions", error);
+        }
+      } finally {
+        setIsFetchingSuggestions(false);
+      }
+    }, 300); // 300ms debounce
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
+  }, [destination, userLocation]);
+
   const handleSearch = async () => {
-    setIsSearching(true);
-    try {
-      // In a real production app, this would be a POST to your FastAPI backend
-      // Since I am a frontend design engineer, I am setting up the structure 
-      // for you to easily plug in your `POST /api/safe-route`
-      
-      /* 
-      const response = await fetch('/api/safe-route', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          origin_lat: 37.7749, // You'd get this from geocoding or geolocation
-          origin_lon: -122.4194,
-          destination,
-          hour: time === 'night' ? 23 : 12,
-          gender
-        })
+    if (!destination.trim()) {
+      // Simple guard to prevent empty requests
+      return;
+    }
+
+    const getCurrentPosition = () =>
+      new Promise<GeolocationPosition>((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error("Geolocation is not supported by this browser."));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(resolve, reject);
       });
+
+    setIsSearching(true);
+    setShowRoutes(false);
+    setRouteRisk(null);
+
+    try {
+      const position = await getCurrentPosition();
+      const originLat = position.coords.latitude;
+      const originLon = position.coords.longitude;
+
+      const response = await fetch(`${API_BASE_URL}/api/safe-route`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          origin_lat: originLat,
+          origin_lon: originLon,
+          destination,
+          dest_lat: destinationCoords ? destinationCoords[0] : null,
+          dest_lon: destinationCoords ? destinationCoords[1] : null,
+          hour: time === "night" ? 23 : 12,
+          gender,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Server error: ${response.status}`);
+      }
+
       const data = await response.json();
-      setMapHtml(data.map_html);
-      */
-      
-      // Simulating the backend response for the mockup
-      setTimeout(() => {
-        setIsSearching(false);
+      if (data.map_html) {
+        setMapHtml(data.map_html);
         setShowRoutes(true);
-      }, 1500);
+
+        if (data.risk && data.risk.safest_route) {
+          const safest = data.risk.safest_route as { risk_percent?: number; label?: string };
+          const percent = typeof safest.risk_percent === "number" ? safest.risk_percent : undefined;
+          const label = typeof safest.label === "string" ? safest.label : undefined;
+
+          if (percent !== undefined && label) {
+            setRouteRisk({ percent, label });
+          }
+        }
+      }
     } catch (error) {
       console.error("Failed to fetch route:", error);
+    } finally {
       setIsSearching(false);
     }
   };
@@ -58,9 +193,13 @@ export default function Home() {
       {/* Map Layer */}
       <div className="absolute inset-0 z-0">
         {mapHtml ? (
-          <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: mapHtml }} />
+          <div ref={mapContainerRef} className="w-full h-full" />
         ) : (
-          <MapView showRoutes={showRoutes} />
+          <MapView
+            showRoutes={showRoutes}
+            hour={time === "night" ? 23 : 12}
+            gender={gender}
+          />
         )}
       </div>
 
@@ -84,18 +223,40 @@ export default function Home() {
         </div>
 
         <div className="pointer-events-auto">
-          <Card className="glass-panel shadow-2xl">
+          <Card className="glass-panel shadow-2xl overflow-visible">
             <CardContent className="pt-6 space-y-4">
               <div className="space-y-2">
                 <Label className="text-xs uppercase text-muted-foreground font-semibold tracking-wider">Destination</Label>
-                <div className="relative">
+                <div className="relative z-50">
                   <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
                   <Input 
                     value={destination}
-                    onChange={(e) => setDestination(e.target.value)}
+                    onChange={(e) => {
+                      setDestination(e.target.value);
+                      setDestinationCoords(null);
+                    }}
                     className="pl-9 bg-black/20 border-white/10" 
                     placeholder="Enter destination address..."
                   />
+
+                  {destinationSuggestions.length > 0 && (
+                    <div className="absolute left-0 right-0 mt-1 bg-black/80 border border-white/10 rounded-md max-h-56 overflow-y-auto z-50">
+                      {destinationSuggestions.map((suggestion, index) => (
+                        <button
+                          key={index}
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-xs text-white hover:bg-white/10"
+                          onClick={() => {
+                            setDestination(suggestion.name);
+                            setDestinationCoords([suggestion.lat, suggestion.lon]);
+                            setDestinationSuggestions([]);
+                          }}
+                        >
+                          {suggestion.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -152,8 +313,18 @@ export default function Home() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="pt-4">
-                  <div className="flex justify-between items-center">
-                    <div className="text-sm text-muted-foreground">The safest route has been calculated based on local crime data and current conditions.</div>
+                  <div className="space-y-2">
+                    <div className="text-sm text-muted-foreground">
+                      The safest route has been calculated based on local crime data and your selected time and gender.
+                    </div>
+                    {routeRisk && (
+                      <div className="text-sm font-semibold flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-primary" />
+                        <span>
+                          Route risk: <span className="text-primary">{routeRisk.label}</span> ({routeRisk.percent}%)
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
